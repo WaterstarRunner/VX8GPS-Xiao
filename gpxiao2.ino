@@ -1,9 +1,33 @@
+#include <TimerTC3.h>
+
 #define STATE_WAITING_FOR_SENTENCE_START -1
 #define STATE_READING_NMEA_TAG 0
 #define MSG_NONE 0
 #define MSG_GGA 1
 #define MSG_RMC 2
 #define MSG_ZDA 3
+
+const int GPSPwr = 3;
+const int MicWrite = 0;
+const int MicRead = 1;
+const int NCOne = 2;
+const int NCTwo = 4;
+const int BtnA = 5;
+const int BtnB = 8;
+const int SPSel = 9;
+const int SpkRead = 10;
+const int VPTTOn = 2482;
+const int VPTTOff = 2730;
+const int BootDelay = 3000;
+volatile bool SpSelOn, GPSOn, GPSMasterOn, MicOn, LEDOn, BootDelayComplete;
+
+
+unsigned long LastBtnA = 0;
+unsigned long LastBtnB = 0;
+unsigned long LastMicChg = 0;
+
+
+
 
 String rxBuffer;  //incoming bytes stacked here, and cleared after each tag or field
 String txBuffer;  //outgoing bytes stacked here, and opportunistically written to serial out
@@ -13,6 +37,121 @@ int rxState;  //positive values indicate the field number being read
 int MSGTag;
 bool PositionFix, QualityGood;
 String LastLat, LastLatDir, LastLong, LastLongDir;
+
+
+void TimerInit() {
+  TimerTc3.initialize(50000);
+  TimerTc3.attachInterrupt(TickInt);
+}
+
+void PinInit() {
+ pinMode(GPSPwr, OUTPUT);
+ digitalWrite(GPSPwr,HIGH);
+ GPSMasterOn = true;
+ GPSOn = true;
+ analogReadResolution(12);
+ analogWriteResolution(10);
+ analogWrite(MicWrite,0);
+ //pinMode(MicRead, INPUT);
+ MicOn = false;
+ pinMode(NCOne, INPUT);
+ pinMode(NCTwo, INPUT);
+ pinMode(BtnA, INPUT_PULLUP);
+ attachInterrupt(digitalPinToInterrupt(BtnA), BtnAInt, RISING);
+ pinMode(BtnB, INPUT_PULLUP);
+ attachInterrupt(digitalPinToInterrupt(BtnB), BtnBInt, RISING);
+ pinMode(SPSel, OUTPUT);
+ digitalWrite (SPSel, HIGH);
+ SpSelOn = true;
+ pinMode(SpkRead, INPUT);
+ pinMode(LED_BUILTIN, OUTPUT);
+ digitalWrite (LED_BUILTIN, LOW);
+ LEDOn = true;
+ TimerInit();
+ BootDelayComplete = false;
+}
+
+void TickInt() {
+  int VPTT;
+  if (BootDelayComplete) {
+    
+    VPTT=analogRead (MicRead);
+    if (MicOn && (VPTT > VPTTOff)){
+      MicOn = false;
+      if (GPSMasterOn)
+      {
+        GPSOn = true;
+        digitalWrite (GPSPwr,HIGH);
+        LEDOn = true;
+        digitalWrite (LED_BUILTIN,LOW);
+      }
+    }
+    else if (!MicOn && (VPTT < VPTTOn)) {
+      MicOn = true;
+      if (GPSOn) {
+        GPSOn = false;
+        digitalWrite (GPSPwr,LOW);
+        LEDOn = false;
+        digitalWrite (LED_BUILTIN,HIGH);
+
+      }
+    }
+  }
+  else
+  {
+    if (millis () > BootDelay) {
+      BootDelayComplete = true;
+    }
+    
+  }
+}
+
+void BtnAInt () {
+  unsigned long now;
+  now = millis ();
+  if (now > (LastBtnA + 100)){
+    LastBtnA = now;
+    if (GPSMasterOn)
+    {
+      digitalWrite (LED_BUILTIN, HIGH);
+      digitalWrite (GPSPwr, LOW);
+      LEDOn = false;
+      GPSMasterOn = false;
+      
+    }
+    else
+    {
+       digitalWrite (GPSPwr, HIGH);
+       digitalWrite (LED_BUILTIN, LOW);
+       LEDOn = true;
+       GPSMasterOn = true;
+
+    }
+ }
+  
+}
+
+void BtnBInt () {
+  unsigned long now;
+  now = millis ();
+  if (now > (LastBtnB + 100)){
+    LastBtnB = now;
+    if (SpSelOn)
+    {
+      digitalWrite (SPSel, LOW);
+      SpSelOn = false;
+      
+    }
+    else
+    {
+       digitalWrite (SPSel, HIGH);
+       SpSelOn = true;
+
+    }
+ }
+  
+}
+
 
 void setup() {
   Serial1.begin(9600);
@@ -33,6 +172,7 @@ void setup() {
   LastLong = "          ";
   LastLatDir = " ";
   LastLongDir = " ";
+  PinInit();
 }
 
 void ParseTag() {
